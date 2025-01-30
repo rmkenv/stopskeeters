@@ -14,21 +14,20 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Constants
-DEFAULT_CENTER = [39.0458, -76.6413]  # Default map center (Baltimore)
-HIGH_RISK_THRESHOLD = 0.7  # Default high-risk threshold
-CRS_WGS84 = "EPSG:4326"  # WGS84 coordinate system for geocoding
-CRS_PROJECTED = "EPSG:26985"  # Projected CRS for Maryland (NAD83 / UTM zone 18N)
+DEFAULT_CENTER = [39.0458, -76.6413]  # Baltimore coordinates
+HIGH_RISK_THRESHOLD = 0.7
+CRS_WGS84 = "EPSG:4326"  # WGS84 coordinate system
+CRS_PROJECTED = "EPSG:26985"  # Projected CRS for Maryland
 
-# Data source URLs
+# Data sources
 DATA_SOURCES = {
     "parcels": "https://geodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer/0/query?outFields=*&where=1%3D1&f=geojson",
     "roads": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/MDOT_Know_Your_Roads/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson"
 }
 WETLANDS_WMS_URL = "https://geodata.md.gov/imap/services/Hydrology/MD_Wetlands/MapServer/WMSServer?"
-WETLANDS_LAYER_NAME = '0'  # Replace with the actual layer name from GetCapabilities
+WETLANDS_LAYER_NAME = '0'
 
-
-@st.cache_data  # Cache the loaded data
+@st.cache_data
 def load_data(source, data_type="geojson"):
     try:
         if data_type == "geojson":
@@ -37,14 +36,15 @@ def load_data(source, data_type="geojson"):
     except Exception as e:
         logger.error(f"Error loading {source}: {e}")
         st.error(f"Failed to load {source}.")
-        return gpd.GeoDataFrame() if data_type == "geojson" else None
+        return gpd.GeoDataFrame()
 
-
-def create_map(center_point=None, parcels=gpd.GeoDataFrame(), wetlands_wms_url=None, roads=gpd.GeoDataFrame(), highlighted_parcel=None, zoom_level=12, basemap='CartoDB positron'):
+def create_map(center_point=None, parcels=gpd.GeoDataFrame(), wetlands_wms_url=None, 
+              roads=gpd.GeoDataFrame(), highlighted_parcel=None):
+    zoom = 12 if center_point else 10
     m = folium.Map(
         location=center_point or DEFAULT_CENTER,
-        zoom_start=zoom_level,
-        tiles=basemap
+        zoom_start=zoom,
+        tiles='CartoDB positron'
     )
 
     if not parcels.empty:
@@ -53,8 +53,8 @@ def create_map(center_point=None, parcels=gpd.GeoDataFrame(), wetlands_wms_url=N
     if wetlands_wms_url:
         folium.WmsTileLayer(
             url=wetlands_wms_url,
-            layers=WETLANDS_LAYER_NAME,  # Use the layer name constant
-            name='Wetlands (WMS)',
+            layers=WETLANDS_LAYER_NAME,
+            name='Wetlands',
             fmt='image/png',
             transparent=True,
             control=True,
@@ -66,36 +66,31 @@ def create_map(center_point=None, parcels=gpd.GeoDataFrame(), wetlands_wms_url=N
 
     if highlighted_parcel is not None:
         folium.GeoJson(
-            highlighted_parcel.to_crs(CRS_WGS84),  # Ensure correct CRS for Folium
+            highlighted_parcel.to_crs(CRS_WGS84),
             style_function=lambda x: {'fillColor': 'red', 'color': 'red'}
         ).add_to(m)
 
     folium.LayerControl().add_to(m)
-    m.attribution = '<a href="https://imap.maryland.gov/">Maryland iMap</a>'  # Add attribution
+    m.attribution = '<a href="https://imap.maryland.gov/">Maryland iMap</a>'
     return m
 
-
-def calculate_risk(parcel):  # Placeholder for risk calculation
-    return 0.5
-
+def calculate_risk(parcel):
+    return 0.5  # Placeholder implementation
 
 def geocode_address(address):
     geolocator = Nominatim(user_agent="mosquito_control_app")
     location = geolocator.geocode(address)
-    if location:
-        return [location.latitude, location.longitude]
-    else:
-        return None
-
+    return [location.latitude, location.longitude] if location else None
 
 def find_nearest_parcel(point, parcels):
-    parcels_proj = parcels.to_crs(CRS_PROJECTED)  # Project to a suitable CRS for distance calculations
-    point_proj = gpd.GeoSeries([point], crs=CRS_WGS84).to_crs(CRS_PROJECTED)[0]
-
-    nearest = nearest_points(point_proj, parcels_proj.unary_union)
-    nearest_parcel = parcels_proj[parcels_proj.geometry == nearest[1]]
-    return nearest_parcel.to_crs(CRS_WGS84)  # Convert back to WGS84
-
+    try:
+        parcels_proj = parcels.to_crs(CRS_PROJECTED)
+        point_proj = gpd.GeoSeries([point], crs=CRS_WGS84).to_crs(CRS_PROJECTED)[0]
+        nearest = nearest_points(point_proj, parcels_proj.unary_union)
+        return parcels_proj[parcels_proj.geometry == nearest[1]].to_crs(CRS_WGS84)
+    except Exception as e:
+        logger.error(f"Error finding nearest parcel: {e}")
+        return gpd.GeoDataFrame()
 
 # Streamlit App
 st.title("Mosquito Control Dashboard")
@@ -104,33 +99,29 @@ with st.spinner("Loading data..."):
     parcels = load_data(DATA_SOURCES["parcels"])
     roads = load_data(DATA_SOURCES["roads"])
 
-basemap_options = {
-    'CartoDB positron': 'CartoDB positron',
-    'NAIP': 'https://services.nationalmap.gov/arcgis/rest/services/USGS_Imagery/NAIP/MapServer/tile/{z}/{y}/{x}'
-}
-selected_basemap = st.selectbox("Select Basemap", options=list(basemap_options.keys()))
-
-
 address = st.text_input("Enter an address:")
 if address:
     center_point = geocode_address(address)
     if center_point:
-        point = Point(center_point[1], center_point[0])  # Create a Shapely Point
+        point = Point(center_point[1], center_point[0])  # Shapely Point (lon, lat)
         nearest_parcel = find_nearest_parcel(point, parcels)
-
+        
         if not nearest_parcel.empty:
             risk_score = calculate_risk(nearest_parcel)
-            st.write(f"Risk Score: {risk_score}")
-
-            main_map = create_map(center_point=center_point, parcels=parcels, wetlands_wms_url=WETLANDS_WMS_URL, roads=roads, highlighted_parcel=nearest_parcel, basemap=basemap_options[selected_basemap])
-            folium_static(main_map)
+            st.metric("Risk Score", f"{risk_score:.2f}")
+            
+            map_obj = create_map(
+                center_point=center_point,
+                parcels=parcels,
+                wetlands_wms_url=WETLANDS_WMS_URL,
+                roads=roads,
+                highlighted_parcel=nearest_parcel
+            )
+            folium_static(map_obj)
         else:
-            st.error("No parcel found near this address.")
-
+            st.error("No parcels found near this address")
     else:
-        st.error("Address not found.")
+        st.error("Address not found")
 else:
-    main_map = create_map(parcels=parcels, wetlands_wms_url=WETLANDS_WMS_URL, roads=roads, basemap=basemap_options[selected_basemap])
-    folium_static(main_map)
-
-# ... (Add other features)
+    map_obj = create_map(parcels=parcels, wetlands_wms_url=WETLANDS_WMS_URL, roads=roads)
+    folium_static(map_obj)
