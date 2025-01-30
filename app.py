@@ -35,11 +35,11 @@ def load_data(source, data_type="geojson"):
             return gdf
     except Exception as e:
         logger.error(f"Error loading {source}: {e}")
-        st.error(f"Failed to load {source}.")
-        return gpd.GeoDataFrame()
+        st.error(f"Failed to load {source}.  Check the URL and your internet connection.")
+        return gpd.GeoDataFrame()  # Return empty GeoDataFrame to avoid further errors
 
-def create_map(center_point=None, parcels=gpd.GeoDataFrame(), wetlands_wms_url=None, 
-              roads=gpd.GeoDataFrame(), highlighted_parcel=None):
+def create_map(center_point=None, parcels=gpd.GeoDataFrame(), wetlands_wms_url=None,
+               roads=gpd.GeoDataFrame(), highlighted_parcel=None):
     zoom = 12 if center_point else 10
     m = folium.Map(
         location=center_point or DEFAULT_CENTER,
@@ -48,7 +48,7 @@ def create_map(center_point=None, parcels=gpd.GeoDataFrame(), wetlands_wms_url=N
     )
 
     if not parcels.empty:
-        folium.GeoJson(parcels, name="Parcels").add_to(m)
+        folium.GeoJson(parcels.to_crs(CRS_WGS84), name="Parcels").add_to(m) # Project parcels to WGS84
 
     if wetlands_wms_url:
         folium.WmsTileLayer(
@@ -62,12 +62,12 @@ def create_map(center_point=None, parcels=gpd.GeoDataFrame(), wetlands_wms_url=N
         ).add_to(m)
 
     if not roads.empty:
-        folium.GeoJson(roads, name="Roads").add_to(m)
+        folium.GeoJson(roads.to_crs(CRS_WGS84), name="Roads").add_to(m) # Project roads to WGS84
 
-    if highlighted_parcel is not None:
+    if highlighted_parcel is not None and not highlighted_parcel.empty: #Check if it's empty
         folium.GeoJson(
-            highlighted_parcel.to_crs(CRS_WGS84),
-            style_function=lambda x: {'fillColor': 'red', 'color': 'red'}
+            highlighted_parcel.to_crs(CRS_WGS84),  # Project highlighted parcel to WGS84
+            style_function=lambda x: {'fillColor': 'red', 'color': 'red', 'fillOpacity': 0.5} # Add fillOpacity
         ).add_to(m)
 
     folium.LayerControl().add_to(m)
@@ -75,19 +75,25 @@ def create_map(center_point=None, parcels=gpd.GeoDataFrame(), wetlands_wms_url=N
     return m
 
 def calculate_risk(parcel):
-    return 0.5  # Placeholder implementation
+    return 0.5  # Placeholder implementation - replace with your actual risk calculation
 
 def geocode_address(address):
     geolocator = Nominatim(user_agent="mosquito_control_app")
-    location = geolocator.geocode(address)
-    return [location.latitude, location.longitude] if location else None
+    try:
+        location = geolocator.geocode(address)
+        return [location.latitude, location.longitude] if location else None
+    except Exception as e:
+        logger.error(f"Geocoding error: {e}")
+        st.error("Geocoding failed. Please check your address and try again.")
+        return None
 
 def find_nearest_parcel(point, parcels):
     try:
         parcels_proj = parcels.to_crs(CRS_PROJECTED)
         point_proj = gpd.GeoSeries([point], crs=CRS_WGS84).to_crs(CRS_PROJECTED)[0]
         nearest = nearest_points(point_proj, parcels_proj.unary_union)
-        return parcels_proj[parcels_proj.geometry == nearest[1]].to_crs(CRS_WGS84)
+        nearest_parcel = parcels_proj[parcels_proj.geometry == nearest[1]].to_crs(CRS_WGS84) #Project back
+        return nearest_parcel
     except Exception as e:
         logger.error(f"Error finding nearest parcel: {e}")
         return gpd.GeoDataFrame()
@@ -99,29 +105,32 @@ with st.spinner("Loading data..."):
     parcels = load_data(DATA_SOURCES["parcels"])
     roads = load_data(DATA_SOURCES["roads"])
 
-address = st.text_input("Enter an address:")
-if address:
-    center_point = geocode_address(address)
-    if center_point:
-        point = Point(center_point[1], center_point[0])  # Shapely Point (lon, lat)
-        nearest_parcel = find_nearest_parcel(point, parcels)
-        
-        if not nearest_parcel.empty:
-            risk_score = calculate_risk(nearest_parcel)
-            st.metric("Risk Score", f"{risk_score:.2f}")
-            
-            map_obj = create_map(
-                center_point=center_point,
-                parcels=parcels,
-                wetlands_wms_url=WETLANDS_WMS_URL,
-                roads=roads,
-                highlighted_parcel=nearest_parcel
-            )
-            folium_static(map_obj)
+if not parcels.empty and not roads.empty: # Check if data loaded successfully
+    address = st.text_input("Enter an address:")
+    if address:
+        center_point = geocode_address(address)
+        if center_point:
+            point = Point(center_point[1], center_point[0])  # Shapely Point (lon, lat)
+            nearest_parcel = find_nearest_parcel(point, parcels)
+
+            if not nearest_parcel.empty:
+                risk_score = calculate_risk(nearest_parcel)
+                st.metric("Risk Score", f"{risk_score:.2f}")
+
+                map_obj = create_map(
+                    center_point=center_point,
+                    parcels=parcels,
+                    wetlands_wms_url=WETLANDS_WMS_URL,
+                    roads=roads,
+                    highlighted_parcel=nearest_parcel
+                )
+                folium_static(map_obj)
+            else:
+                st.error("No parcels found near this address.")
         else:
-            st.error("No parcels found near this address")
+            st.error("Address not found.")
     else:
-        st.error("Address not found")
+        map_obj = create_map(parcels=parcels, wetlands_wms_url=WETLANDS_WMS_URL, roads=roads)
+        folium_static(map_obj)
 else:
-    map_obj = create_map(parcels=parcels, wetlands_wms_url=WETLANDS_WMS_URL, roads=roads)
-    folium_static(map_obj)
+    st.error("Failed to load required data.  The app cannot run.")
