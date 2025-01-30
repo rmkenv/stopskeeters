@@ -1,0 +1,7 @@
+streamlit
+geopandas
+folium
+streamlit_folium
+geopy
+requests
+duckdb
