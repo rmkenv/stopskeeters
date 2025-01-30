@@ -1,7 +1,8 @@
 streamlit
+pandas
 geopandas
 folium
-streamlit_folium
+streamlit-folium
 geopy
-requests
-duckdb
+shapely
+pyproj
