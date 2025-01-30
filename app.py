@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Constants
 DATA_SOURCES = {
     "parcels": "https://geodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer/0/query?outFields=*&where=1%3D1&f=geojson",
-    "wetlands": "https://geodata.md.gov/imap/rest/services/Hydrology/MD_Wetlands/MapServer/0/query?outFields=*&where=1%3D1&f=geojson",
+    "wetlands": "https://geodata.md.gov/imap/services/Hydrology/MD_Wetlands/MapServer/WFSServer?request=GetCapabilities&service=WFS",
     "roads": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/MDOT_Know_Your_Roads/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson"
 }
 DEFAULT_CENTER = [39.0457, -76.6413]  # Maryland center coordinates
